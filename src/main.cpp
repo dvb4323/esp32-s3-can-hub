@@ -85,6 +85,58 @@ volatile uint32_t hbFail = 0;
 volatile uint32_t hbRecover = 0;
 volatile uint32_t doorCmdTotal = 0;
 
+// ================== BOUNDED CAN EVENT LOG ==================
+// No allocation, formatting, HTTP or blocking semaphore in the producer path.
+static constexpr size_t CAN_LOG_CAPACITY = 256;
+static constexpr size_t CAN_LOG_BATCH = 64;
+struct CanLogEntry {
+  uint64_t seq;
+  uint32_t timestamp;
+  uint32_t id;
+  uint8_t len;
+  uint8_t flags;  // bit 0: TX queued; bit 1: EXT; bit 2: RTR
+  uint8_t data[8];
+};
+static CanLogEntry canLogEntries[CAN_LOG_CAPACITY];
+static uint64_t canLogNextSeq = 1;
+static uint32_t canLogSession = 0;
+static portMUX_TYPE canLogMux = portMUX_INITIALIZER_UNLOCKED;
+
+void recordCanLog(const twai_message_t &msg, bool tx, uint32_t timestamp) {
+  CanLogEntry entry = {};
+  entry.timestamp = timestamp;
+  entry.id = msg.identifier;
+  entry.len = msg.data_length_code > 8 ? 8 : msg.data_length_code;
+  entry.flags = (tx ? 1 : 0) | ((msg.flags & TWAI_MSG_FLAG_EXTD) ? 2 : 0)
+                | ((msg.flags & TWAI_MSG_FLAG_RTR) ? 4 : 0);
+  if (!(entry.flags & 4)) memcpy(entry.data, msg.data, entry.len);
+  portENTER_CRITICAL(&canLogMux);
+  entry.seq = canLogNextSeq++;
+  canLogEntries[(entry.seq - 1) % CAN_LOG_CAPACITY] = entry;
+  portEXIT_CRITICAL(&canLogMux);
+}
+
+size_t copyCanLogBatch(uint64_t after, bool sameSession, CanLogEntry *out,
+                      uint64_t &next, uint64_t &lost, bool &more) {
+  portENTER_CRITICAL(&canLogMux);
+  const uint64_t last = canLogNextSeq - 1;
+  const uint64_t oldest = canLogNextSeq > CAN_LOG_CAPACITY
+                            ? canLogNextSeq - CAN_LOG_CAPACITY : 1;
+  const uint64_t cursor = sameSession && after <= last ? after : 0;
+  lost = cursor < oldest - 1 ? oldest - 1 - cursor : 0;
+  const uint64_t first = cursor + 1 < oldest ? oldest : cursor + 1;
+  size_t count = 0;
+  next = cursor;
+  for (uint64_t seq = first; seq <= last && count < CAN_LOG_BATCH; ++seq) {
+    out[count++] = canLogEntries[(seq - 1) % CAN_LOG_CAPACITY];
+    next = seq;
+  }
+  more = next < last;
+  portEXIT_CRITICAL(&canLogMux);
+  return count;
+}
+
+
 // ================== HTML ==================
 static const char INDEX_HTML[] PROGMEM = R"HTML(
 <!doctype html>
@@ -1712,6 +1764,7 @@ bool transmitFrame(const CanRow &r, String &err) {
     return false;
   }
 
+  recordCanLog(msg, true, millis());
   txTotal++;
   return true;
 }
@@ -1793,6 +1846,7 @@ void canRxTask(void *arg) {
       len = 8;
     }
 
+    recordCanLog(msg, false, now);
     updateRxRow(msg.identifier, ext, rtr, len, msg.data, now);
 
     if (!ext && !rtr) {
@@ -1830,7 +1884,10 @@ void canHeartbeatTask(void *arg) {
         m.data_length_code = 1;
         m.data[0] = 0xA5;
 
-        if (twai_transmit(&m, 0) == ESP_OK) hbSent++;
+        if (twai_transmit(&m, 0) == ESP_OK) {
+          recordCanLog(m, true, millis());
+          hbSent++;
+        }
         else                                hbFail++;
       }
     }
@@ -1950,15 +2007,13 @@ td{font-family:Consolas,"SFMono-Regular",monospace}
 .card,.panel,details{background:var(--panel);border:1px solid var(--line);border-radius:12px}
 .card{padding:16px 20px}.card .label{color:var(--muted);font-size:12px}
 .value{font-size:24px;font-weight:650;margin:6px 0 0;line-height:1.2;overflow-wrap:anywhere}.card small{display:block}
-.grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:18px;margin-bottom:18px}
+.grid{margin-bottom:18px}
 .panel{padding:20px;min-width:0}
 .panelhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap}
 .controls{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
 .stop{grid-column:1/-1;min-height:52px;font-size:18px;letter-spacing:1px}
 .stop:disabled{background:#351f28;border:1px solid #8c4d5b;color:#ffb7be}.command:disabled{min-height:42px}
 .duty{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}.unit{display:flex;align-items:center;gap:8px}.unit input{width:100%}
-.diag{display:grid;grid-template-columns:1fr 1fr;gap:0 20px;margin:0}
-.diag div{padding:10px 0;border-bottom:1px solid #213040}.diag dt{color:var(--muted);font-size:11px}.diag dd{margin:3px 0 0;font-family:Consolas,monospace;font-size:16px}
 .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.toolbar label{display:flex;align-items:center;gap:8px}.toolbar input{width:130px}.toolbar select{width:88px}
 .tablewrap{overflow:auto;max-height:370px;border:1px solid var(--line);border-radius:8px;margin-top:14px}
 table{border-collapse:collapse;width:100%;white-space:nowrap;font-size:12px;text-align:left}
@@ -1966,14 +2021,14 @@ th{position:sticky;top:0;background:#1b2837;color:var(--muted);font:600 10px "Se
 th,td{padding:11px 12px;border-bottom:1px solid #233143}tbody tr:hover{background:#182736}
 .empty{text-align:center;color:var(--muted);padding:30px}.rx{color:var(--accent)}.tx{color:#8dbaff}
 .footnote{margin-top:10px;font-size:11px;color:var(--muted)}
-details{margin-top:14px;min-width:0}summary{padding:16px 20px;cursor:pointer;font-weight:600}
+details{margin-top:14px;min-width:0}summary{padding:16px 20px;cursor:pointer;font-weight:600}#logCount{font-size:12px;font-weight:400;margin-left:8px}#logStatus{font-size:12px}
 .detailbody{padding:0 20px 20px}
 .formgrid{display:grid;grid-template-columns:120px 125px minmax(180px,1fr) 120px;gap:12px;margin:14px 0}
 .actions{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0}.primary{background:#225047;color:#b5fbe5;border-color:#387a69}.danger{color:var(--red)}
 #actionMessage{min-height:24px;overflow-wrap:anywhere}.stale table{opacity:.55}
 .settings{display:flex;align-items:end;gap:12px;flex-wrap:wrap}.settings label{width:180px}
-@media(max-width:960px){.shell{padding:16px 20px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.grid{grid-template-columns:1fr}.formgrid{grid-template-columns:1fr 1fr}}
-@media(max-width:520px){.shell{padding:12px}.header{gap:8px}.card{padding:14px}.value{font-size:20px}.panel{padding:16px}.toolbar{align-items:flex-start}.toolbar label{font-size:11px}.duty{grid-template-columns:1fr}.formgrid{grid-template-columns:1fr}.detailbody{padding:0 16px 16px}.diag{gap:0 10px}}
+@media(max-width:960px){.shell{padding:16px 20px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.formgrid{grid-template-columns:1fr 1fr}}
+@media(max-width:520px){.shell{padding:12px}.header{gap:8px}.card{padding:14px}.value{font-size:20px}.panel{padding:16px}.toolbar{align-items:flex-start}.toolbar label{font-size:11px}.duty{grid-template-columns:1fr}.formgrid{grid-template-columns:1fr}.detailbody{padding:0 16px 16px}}
 @media(max-width:340px){.cards{grid-template-columns:1fr}.controls{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 </style>
@@ -1998,16 +2053,6 @@ details{margin-top:14px;min-width:0}summary{padding:16px 20px;cursor:pointer;fon
       <div id="motorCommands" class="controls" aria-describedby="motorHelp"></div>
       <div class="duty"><label>Duty<div class="unit"><input type="number" min="0" max="100" placeholder="Unavailable" disabled aria-describedby="motorHelp"><span>%</span></div></label><label>Max duty<div class="unit"><input type="number" min="0" max="100" placeholder="Unavailable" disabled aria-describedby="motorHelp"><span>%</span></div></label></div>
     </section>
-    <section class="panel" aria-labelledby="diagTitle">
-      <div class="panelhead"><h2 id="diagTitle">Diagnostics</h2><span id="snapshotAge" class="chip">NO SNAPSHOT</span></div>
-      <dl class="diag">
-        <div><dt title="Received frames / transmit queue acceptances, excluding heartbeat">RX / TX queued</dt><dd id="totals">&mdash; / &mdash;</dd></div><div><dt>Cyclic jobs</dt><dd id="activeJobs">&mdash; / 8</dd></div>
-        <div><dt>TX / RX errors</dt><dd id="errors">&mdash; / &mdash;</dd></div><div><dt>Bus errors / missed RX</dt><dd id="busErrors">&mdash; / &mdash;</dd></div>
-        <div><dt>Heartbeat sent / failed</dt><dd id="heartbeat">&mdash; / &mdash;</dd></div><div><dt>Bus recoveries</dt><dd id="recoveries">&mdash;</dd></div>
-        <div><dt>Uptime</dt><dd id="uptime">&mdash;</dd></div><div><dt>Bitrate</dt><dd id="bitrate">&mdash;</dd></div>
-      </dl>
-      
-    </section>
   </div>
   <section class="panel" aria-labelledby="monitorTitle" id="monitorPanel">
     <div class="panelhead"><div><h2 id="monitorTitle">CAN Monitor</h2></div><div class="toolbar"><label><span class="sr-only">Direction</span><select id="direction"><option value="ALL">All</option><option>RX</option><option>TX</option></select></label><label><span class="sr-only">ID filter</span><input id="idFilter" placeholder="Filter ID" maxlength="10"></label><button id="pauseMonitor" type="button" aria-pressed="false">Pause view</button></div></div>
@@ -2024,6 +2069,12 @@ details{margin-top:14px;min-width:0}summary{padding:16px 20px;cursor:pointer;fon
   </div></details>
   <details><summary>Settings</summary><div class="detailbody"><div class="settings"><label>Bitrate<select id="bitrateSelect"><option value="125">125 kbit/s</option><option value="250">250 kbit/s</option><option value="500" selected>500 kbit/s</option><option value="1000">1000 kbit/s</option></select></label><button id="applyBitrate" type="button">Apply bitrate</button></div><p class="footnote">Applying briefly interrupts CAN communication.</p><p id="deviceInfo" class="footnote"></p></div></details>
   
+  <details id="canLogPanel"><summary>CAN Log <span id="logCount" class="muted">0</span></summary><div class="detailbody">
+    <div class="toolbar"><label><span class="sr-only">Log direction</span><select id="logDirection"><option value="ALL">All</option><option>RX</option><option>TX</option></select></label><button id="downloadLog" type="button" disabled>Download CSV</button><button id="clearLog" type="button" disabled>Clear log</button><span id="logStatus" class="muted" role="status">Waiting</span></div>
+    <div class="tablewrap"><table><thead><tr><th scope="col">Timestamp (ms)</th><th scope="col">Dir</th><th scope="col">CAN ID</th><th scope="col">Type</th><th scope="col">DLC</th><th scope="col">Payload (hex)</th></tr></thead><tbody id="logBody"><tr><td colspan="6" class="empty">No log entries</td></tr></tbody></table></div>
+    <p class="footnote">2,000 retained / 200 shown · device uptime in ms · TX = queued</p>
+  </div></details>
+
 </main>
 <script>
 'use strict';
@@ -2037,8 +2088,8 @@ let selected = -1, frozenRows = null, pollPending = null, configEditing = false;
 // A future protocol adapter must keep these disabled until real integration exists.
 const motorCapability = Object.freeze({available:false, reason:'Motor protocol not integrated.'});
 const motorCommands = Object.freeze([
-  ['STOP','STOP'],['START_FORWARD','Start forward'],['START_REVERSE','Start reverse'],
-  ['SET_DUTY','Set duty'],['SET_MAX_DUTY','Set max duty'],['GET_STATUS','Get status'],['CLEAR_FAULT','Clear fault']
+  ['STOP','STOP'],['FORWARD','Forward'],['REVERSE','Reverse'],
+  ['SET_DUTY','Set duty'],['SET_MAX_DUTY','Set max duty'],['START','Start'],['CLEAR_FAULT','Clear fault']
 ]);
 function renderMotorCommands() {
   $('motorCommands').innerHTML = motorCommands.map(([cmd,label]) => `<button type="button" class="command ${cmd === 'STOP' ? 'stop' : ''}" data-motor="${cmd}" disabled aria-describedby="motorHelp" title="${motorCapability.reason}">${label}</button>`).join('');
@@ -2080,8 +2131,6 @@ function renderConnection() {
   const text = disconnected ? 'DISCONNECTED' : stale ? 'STALE' : snapshot ? 'CONNECTED' : 'CONNECTING';
   $('browserLink').textContent = text;
   $('browserLink').className = 'chip ' + (fresh() ? 'ok' : 'warn');
-  $('snapshotAge').textContent = snapshot ? (stale || disconnected ? 'OLD / ' : '') + (age / 1000).toFixed(1) + ' s ago' : 'NO SNAPSHOT';
-  $('snapshotAge').className = 'chip ' + (fresh() ? 'ok' : 'warn');
   $('canValue').textContent = snapshot ? snapshot.can : 'Unknown';
   $('canValue').className = 'value ' + (!fresh() ? 'muted' : snapshot.can === 'RUNNING' ? 'ok' : 'error');
   $('canDetail').textContent = !snapshot ? 'Waiting' : !fresh() ? 'Last known / stale' : snapshot.bitrate + ' kbit/s';
@@ -2111,14 +2160,6 @@ function renderDebug() {
   updateLocks();
 }
 function renderSnapshot(data) {
-  $('totals').textContent = data.rxTotal + ' / ' + data.txTotal;
-  $('activeJobs').textContent = data.tx.filter(row => row.auto).length + ' / 8';
-  $('errors').textContent = data.txErr + ' / ' + data.rxErr;
-  $('busErrors').textContent = data.busErr + ' / ' + data.rxMiss;
-  $('heartbeat').textContent = data.hbSent + ' / ' + data.hbFail;
-  $('recoveries').textContent = data.hbRecover;
-  $('uptime').textContent = (data.uptime / 1000).toFixed(1) + ' s';
-  $('bitrate').textContent = data.bitrate + ' kbit/s';
   $('deviceInfo').textContent = data.ip + ' / FW ' + data.fw;
   if (!configEditing) $('bitrateSelect').value = String(data.bitrate);
   renderConnection(); renderMonitor(); renderDebug();
@@ -2188,6 +2229,103 @@ $('pauseMonitor').addEventListener('click', () => { paused = !paused; frozenRows
 $('direction').addEventListener('change', renderMonitor);
 $('idFilter').addEventListener('input', renderMonitor);
 document.addEventListener('keydown', event => { if (event.repeat && event.target.tagName === 'BUTTON') event.preventDefault(); });
+// Event history is independent of the aggregated monitor and its pause/filter.
+const LOG_LIMIT = 2000, LOG_VIEW_LIMIT = 200, LOG_KEY = 'webcan.log.v1';
+let logEntries = [], logCursor = 0, logSession = null, logMissed = 0, logTrimmed = 0;
+let logOffline = false, logStorage = true, logPending = null;
+function loadLog() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOG_KEY) || 'null');
+    if (!saved || !Array.isArray(saved.entries) || !Number.isSafeInteger(saved.cursor)
+        || saved.cursor < 0 || !Number.isSafeInteger(saved.session)) return;
+    logEntries = saved.entries.filter(entry => Number.isSafeInteger(entry.seq)
+      && Number.isSafeInteger(entry.boot) && Number.isFinite(entry.timestamp)
+      && ['RX','TX'].includes(entry.direction)).slice(-LOG_LIMIT);
+    logCursor = saved.cursor; logSession = saved.session;
+    logMissed = Math.max(0, Number(saved.missed) || 0);
+    logTrimmed = Math.max(0, Number(saved.trimmed) || 0);
+  } catch (error) { logStorage = false; }
+}
+function persistLog() {
+  try {
+    localStorage.setItem(LOG_KEY, JSON.stringify({session:logSession, cursor:logCursor,
+      entries:logEntries, missed:logMissed, trimmed:logTrimmed}));
+    logStorage = true;
+  } catch (error) { logStorage = false; }
+}
+function filteredLog() {
+  const direction = $('logDirection').value;
+  return logEntries.filter(entry => direction === 'ALL' || entry.direction === direction);
+}
+function renderLog() {
+  $('logCount').textContent = logEntries.length;
+  $('downloadLog').disabled = !filteredLog().length;
+  $('clearLog').disabled = !logEntries.length && !logMissed && !logTrimmed;
+  const notes = [];
+  if (logOffline) notes.push('Offline');
+  if (logMissed) notes.push(logMissed + ' missed');
+  if (logTrimmed) notes.push(logTrimmed + ' older removed');
+  if (!logStorage) notes.push('Browser storage unavailable');
+  $('logStatus').textContent = notes.join(' / ');
+  $('logStatus').className = notes.length ? 'warn' : 'muted';
+  if (!$('canLogPanel').open) return;
+  const rows = filteredLog().slice(-LOG_VIEW_LIMIT).reverse();
+  $('logBody').innerHTML = rows.length ? rows.map(entry => `<tr title="Boot ${esc(entry.boot)} / #${esc(entry.seq)}"><td>${esc(entry.timestamp)}</td><td class="${entry.direction.toLowerCase()}">${entry.direction}</td><td>${esc(entry.canid)}</td><td>${esc(entry.type)}</td><td>${esc(entry.len)}</td><td>${esc(entry.data || '\u2014')}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No log entries</td></tr>';
+}
+function acceptLog(data) {
+  if (!Number.isSafeInteger(data.session) || !Number.isSafeInteger(data.next)
+      || !Number.isSafeInteger(data.lost) || !Array.isArray(data.entries)
+      || data.next < 0 || data.lost < 0) throw new Error('Invalid log batch');
+  const same = logSession === data.session;
+  let cursor = same ? logCursor : 0;
+  if (same && data.next < cursor) throw new Error('Outdated log batch');
+  for (const entry of data.entries) {
+    if (!Number.isSafeInteger(entry.seq) || entry.seq <= cursor || entry.seq > data.next
+        || !Number.isFinite(entry.timestamp) || !['RX','TX'].includes(entry.direction)) continue;
+    logEntries.push({...entry, boot:data.session}); cursor = entry.seq;
+  }
+  logSession = data.session; logCursor = data.next; logMissed += data.lost;
+  if (logEntries.length > LOG_LIMIT) {
+    const excess = logEntries.length - LOG_LIMIT;
+    logTrimmed += excess; logEntries.splice(0, excess);
+  }
+  logOffline = false; persistLog(); renderLog();
+}
+async function pollLogOnce() {
+  if (logPending) return logPending;
+  logPending = (async () => {
+    try {
+      const query = new URLSearchParams({after:String(logCursor), session:logSession === null ? '' : String(logSession)});
+      const data = await request('/api/can/log?' + query);
+      acceptLog(data); return !!data.more;
+    } catch (error) { logOffline = true; renderLog(); return false; }
+  })();
+  try { return await logPending; } finally { logPending = null; }
+}
+async function logLoop() {
+  const more = await pollLogOnce();
+  setTimeout(logLoop, document.hidden ? 2000 : more ? 100 : 600);
+}
+function downloadLog() {
+  const rows = filteredLog();
+  if (!rows.length) return;
+  const cell = value => '"' + String(value ?? '').replace(/"/g,'""') + '"';
+  const lines = ['boot,sequence,timestamp_ms,direction,can_id,type,dlc,payload',
+    ...rows.map(entry => [entry.boot,entry.seq,entry.timestamp,entry.direction,entry.canid,entry.type,entry.len,entry.data].map(cell).join(','))];
+  const url = URL.createObjectURL(new Blob(['\uFEFF' + lines.join('\r\n')], {type:'text/csv;charset=utf-8'}));
+  const anchor = document.createElement('a'); anchor.href = url;
+  anchor.download = 'can-log-' + new Date().toISOString().replace(/[:.]/g,'-') + '.csv';
+  anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+$('canLogPanel').addEventListener('toggle', renderLog);
+$('logDirection').addEventListener('change', renderLog);
+$('downloadLog').addEventListener('click', downloadLog);
+$('clearLog').addEventListener('click', () => {
+  logEntries = []; logMissed = 0; logTrimmed = 0;
+  persistLog(); renderLog();  // Local history only; do not clear CAN tables/jobs.
+});
+loadLog(); renderLog(); logLoop();
+
 renderMotorCommands(); renderConnection(); pollLoop();
 setInterval(renderConnection, 250);
 </script>
@@ -2265,6 +2403,66 @@ void handleDashboardState() {
     if (!first) j += ",";
     appendDashboardRowJson(j, snapshotRx[i], false, i);
     first = false;
+  }
+  j += "]}";
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json; charset=utf-8", j);
+}
+
+
+// Independent cursors allow multiple browsers to read without draining the log.
+void handleCanLog() {
+  String rawAfter = server.arg("after");
+  if (rawAfter.length() > 16) {
+    jsonReply(false, "Invalid log cursor");
+    return;
+  }
+  for (size_t i = 0; i < rawAfter.length(); ++i) {
+    if (rawAfter[i] < '0' || rawAfter[i] > '9') {
+      jsonReply(false, "Invalid log cursor");
+      return;
+    }
+  }
+  const uint64_t after = strtoull(rawAfter.c_str(), nullptr, 10);
+  if (after > 9007199254740991ULL) {
+    jsonReply(false, "Invalid log cursor");
+    return;
+  }
+  static CanLogEntry batch[CAN_LOG_BATCH];
+  uint64_t next, lost;
+  bool more;
+  const size_t count = copyCanLogBatch(after,
+      server.arg("session") == String(canLogSession), batch, next, lost, more);
+  String j;
+  j.reserve(12000);
+  j += "{\"ok\":true,\"session\":";
+  j += String(canLogSession);
+  j += ",\"next\":";
+  j += String((unsigned long long)next);
+  j += ",\"lost\":";
+  j += String((unsigned long long)lost);
+  j += ",\"more\":";
+  j += more ? "true" : "false";
+  j += ",\"entries\":[";
+  for (size_t i = 0; i < count; ++i) {
+    const CanLogEntry &entry = batch[i];
+    if (i) j += ",";
+    j += "{\"seq\":";
+    j += String((unsigned long long)entry.seq);
+    j += ",\"timestamp\":";
+    j += String(entry.timestamp);
+    j += ",\"direction\":\"";
+    j += (entry.flags & 1) ? "TX" : "RX";
+    j += "\",\"canid\":\"";
+    j += hexId(entry.id, entry.flags & 2);
+    j += "h\",\"type\":\"";
+    j += (entry.flags & 2) ? "EXT" : "STD";
+    if (entry.flags & 4) j += " RTR";
+    j += "\",\"len\":";
+    j += String(entry.len);
+    j += ",\"data\":\"";
+    appendEscaped(j, dataString(entry.data, entry.len, entry.flags & 4));
+    j += "\"}";
   }
   j += "]}";
   server.sendHeader("Cache-Control", "no-store");
@@ -2706,6 +2904,7 @@ void setup() {
   Serial.printf("CAN RX GPIO: %d\n", CAN_RX_PIN);
   Serial.printf("CAN TX GPIO: %d\n", CAN_TX_PIN);
 
+  canLogSession = esp_random();
   rxMutex = xSemaphoreCreateMutex();
 
   canReady = startCan(currentBitrate);
@@ -2754,6 +2953,7 @@ void setup() {
 
   server.on("/motor", HTTP_GET, handleMotorPage);
   server.on("/api/dashboard/state", HTTP_GET, handleDashboardState);
+  server.on("/api/can/log", HTTP_GET, handleCanLog);
 
   server.begin();
 

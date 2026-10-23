@@ -1,37 +1,29 @@
 # GUI changelog
 
-2026-10-23 — additive DC Motor Dashboard
+2026-10-23
 
-## Standalone UI cleanup
+## Current: remove Diagnostics, add event log
 
-- Removed large title, console branding/logo, all Default/Door interface links, warning banners, numbered labels, repeated implementation explanations and footer.
-- Kept compact connection status and short offline/stale notices; one motor-unavailable explanation remains next to disabled controls. STOP stays prominent.
-- Shortened overview/diagnostic labels, tool captions and action messages. Moved IP/build information into collapsed Settings; retained monitor coverage and controller/queue semantics in concise captions/tooltips.
-- Changed only MOTOR_HTML inside main.cpp. All firmware handlers, legacy HTML, routes, CAN behavior and guards remain byte-for-byte unchanged from the previous dashboard implementation.
-- Revalidated 25 browser checks and the configured PlatformIO build; final application flash 1,055,142 bytes, static RAM 55,940 bytes.
+- Removed Diagnostics and its DOM updates. Motor Control fills the available width.
+- Added CAN Log as the final expandable section, with timestamp, RX/TX, CAN ID/type, DLC/payload, direction filter, CSV download and local Clear log.
+- Logs individual events, including repeated IDs/timestamps, successful RX and queued manual/cyclic/door/heartbeat TX.
+- Added fixed 256-event firmware ring, 64-event batches, read-only cursor API, boot-session detection and missed-record reporting. Producer code allocates no heap and performs no JSON/HTTP operations.
+- Browser retains 2000 events across refresh through localStorage; expanded view renders latest 200 matches. CSV exports all retained matches, with boot and sequence columns. Storage failures do not prevent live history or export.
+- Clear log only affects browser history; Monitor pause does not pause capture. No motor controls enabled or commands replayed.
+- Static RAM 66,212 bytes; application flash 1,064,526 bytes. Compared with preceding standalone UI: +10,272 RAM bytes and +9384 application flash bytes.
 
-## Added
+## Preserved behavior
 
-- `/motor`: responsive dark dashboard, four overview cards, dedicated motor panel, diagnostics, timestamped CAN monitor, expandable CAN Tools/settings and local fonts. All executable implementation is in `src/main.cpp`.
-- Reusable descriptors for STOP, START_FORWARD, START_REVERSE, SET_DUTY, SET_MAX_DUTY, GET_STATUS, CLEAR_FAULT. Every motor control is explicitly disabled because this firmware implements the incompatible door protocol. No motor values or successful actions are fabricated. Motor STOP is prominent; there are no legacy interface links.
-- Browser connectivity, stale snapshot watchdog, actual controller status, bitrate, errors, dropped RX counter, heartbeat counters/recoveries, active cyclic-job count, uptime/IP/build.
-- CAN monitor with device uptime milliseconds, RX/TX, ID/type, DLC, payload, count, cycle, ID/direction filters and presentation pause. Fixed table bounds, no trace accumulation. Unsent TX drafts are excluded. Heartbeat and direct door-command TX are not invented as monitor rows; coverage is explained on screen.
-- Full raw debug compose/select/save/send/delete/cyclic/clear workflow using original APIs, standard/extended/RTR frame choices, persistent browser drafts while polling, auto-row edit locks, explicit bitrate application.
-- Serial polling with abort timeout, slower background polling, no overlapping GETs, no POST retry or command replay. Busy guard waits for a post-action snapshot even if an earlier GET was in flight.
-- Read-only `/api/dashboard/state`: existing row schema plus lastMs; uptime, counters and diagnostics. Copy 120 RX rows into fixed static storage under the existing mutex, release mutex, then serialize. No changes to RX/heartbeat task execution or new task allocation. Static RAM increase: 3840 bytes.
+Legacy HTML, prior routes/API schemas, CAN pins/settings/drivers, task priorities/cores/stacks, payload encodings/IDs, heartbeat interval/recovery, RX aggregation and manual/cyclic guards remain unchanged. Required firmware changes are three bounded capture hooks, log support code, per-boot session initialization and one GET route.
 
-## Preserved
+Source verification removes those exact additions and restores previous MOTOR_HTML to obtain a byte-for-byte pre-log source match. No unrelated source/configuration or dependency changes. All shipped implementation remains in main.cpp.
 
-Original `INDEX_HTML` and `DOOR_HTML`, `/` and `/door`, original functions, original API schemas, door STOP busy exemption, raw frame validation and auto-job guards are byte-for-byte preserved. Adding the dashboard does not redirect the root page. Open `/motor` directly; the original pages' navigation was not edited.
+## Earlier revisions
 
-CAN pins, AP settings, PlatformIO environment/dependencies, timing presets, queue/table sizes, task priorities/stacks/cores, door command bytes/DLC/IDs, heartbeat payload/200 ms period/recovery, driver flags and TX/RX processing remain unchanged. No motor protocol integration or filesystem upload is needed. `src/main.zip`, config and other source files are untouched.
+- Standalone cleanup removed branding/title, legacy links, banners, numbered labels and verbose explanations.
+- Initial dashboard added /motor, overview, timestamped aggregate Monitor, raw CAN tools/settings and the read-only snapshot API.
+- Audit found the implemented door protocol incompatible with Phase 4A; motor controls remain unavailable.
 
-Existing firmware may continue previously enabled cyclic jobs across browser refresh/reconnect; the dashboard reads that state and does not enable/restart jobs. Opening the dashboard sends no command POSTs. The existing startup heartbeat remains active independently.
+## Limits
 
-## Delivery files
-
-Only `src/main.cpp` changed plus the four requested root documents: `GUI_AUDIT.md`, `GUI_REDESIGN_PLAN.md`, `GUI_CHANGELOG.md`, `GUI_TEST_REPORT.md`. Build outputs are generated by PlatformIO under the ignored `.pio` directory. External mock test scripts/screenshots remain outside the repository.
-
-## Known boundaries
-
-The monitor preserves the existing aggregated-table model; it cannot display every high-rate frame or retained direct door TX. TX acceptance is not remote acknowledgement. Actual motor stopped/running/busy/fault/telemetry freshness are unavailable until a verified Phase 4A adapter and firmware guards exist. Hardware timing, CAN saturation, heap behavior and AP reconnect still need bench validation; see GUI_TEST_REPORT.md.
+Device retains 256 events in volatile RAM; browser retains 2000. Missed and retention counts are separate. Timestamp is uptime; TX is queue acceptance. Real CAN timing/throughput needs the bench checks in GUI_TEST_REPORT.md.
