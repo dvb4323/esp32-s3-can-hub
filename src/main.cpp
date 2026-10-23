@@ -1913,6 +1913,365 @@ void appendRowJson(String &j, const CanRow &r, bool isTx, int idx) {
   j += "}";
 }
 
+// ================== HTML: DC MOTOR DASHBOARD ==================
+// Presentation only: Phase 4A is NOT implemented by the current door protocol.
+static const char MOTOR_HTML[] PROGMEM = R"MOTOR(
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1017">
+<title>Motor Control</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1017;--panel:#121b26;--line:#293748;--text:#e8edf5;--muted:#9baabd;--accent:#6ae2c3;--amber:#f5bd68;--red:#ff8a91}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI",system-ui,sans-serif}
+button,input,select{font:inherit;border:1px solid var(--line);border-radius:7px;background:#192534;color:var(--text);padding:9px 12px}
+button,input,select,summary{touch-action:manipulation}
+button{cursor:pointer;font-weight:600}
+button:hover:enabled{background:#26384b;border-color:#64819b}
+button:disabled,input:disabled,select:disabled{cursor:not-allowed;color:#8c9bad;background:#161e29}
+button:disabled{border-style:dashed}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+input,select{min-width:0;width:100%}
+label{display:grid;gap:6px;font-size:12px;color:var(--muted)}
+h1,h2,p{margin:0}h2{font-size:16px;font-weight:600}
+.muted,small{color:var(--muted)}small{font-size:12px}
+td{font-family:Consolas,"SFMono-Regular",monospace}
+.shell{max-width:1440px;margin:auto;padding:18px 28px 28px}
+.header{display:flex;align-items:center;justify-content:flex-end;gap:12px;min-height:32px;margin-bottom:14px;flex-wrap:wrap}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.linknote{color:var(--amber);font-size:12px;margin-right:auto}
+.chip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:20px;padding:5px 10px;font-size:11px;letter-spacing:.5px;white-space:nowrap;color:var(--muted)}
+.chip:before{content:"";width:6px;height:6px;border-radius:100%;background:currentColor}
+.ok{color:var(--accent)}.warn{color:var(--amber)}.error{color:var(--red)}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}
+.card,.panel,details{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.card{padding:16px 20px}.card .label{color:var(--muted);font-size:12px}
+.value{font-size:24px;font-weight:650;margin:6px 0 0;line-height:1.2;overflow-wrap:anywhere}.card small{display:block}
+.grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:18px;margin-bottom:18px}
+.panel{padding:20px;min-width:0}
+.panelhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
+.stop{grid-column:1/-1;min-height:52px;font-size:18px;letter-spacing:1px}
+.stop:disabled{background:#351f28;border:1px solid #8c4d5b;color:#ffb7be}.command:disabled{min-height:42px}
+.duty{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}.unit{display:flex;align-items:center;gap:8px}.unit input{width:100%}
+.diag{display:grid;grid-template-columns:1fr 1fr;gap:0 20px;margin:0}
+.diag div{padding:10px 0;border-bottom:1px solid #213040}.diag dt{color:var(--muted);font-size:11px}.diag dd{margin:3px 0 0;font-family:Consolas,monospace;font-size:16px}
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.toolbar label{display:flex;align-items:center;gap:8px}.toolbar input{width:130px}.toolbar select{width:88px}
+.tablewrap{overflow:auto;max-height:370px;border:1px solid var(--line);border-radius:8px;margin-top:14px}
+table{border-collapse:collapse;width:100%;white-space:nowrap;font-size:12px;text-align:left}
+th{position:sticky;top:0;background:#1b2837;color:var(--muted);font:600 10px "Segoe UI",sans-serif;letter-spacing:.7px;text-transform:uppercase;z-index:1}
+th,td{padding:11px 12px;border-bottom:1px solid #233143}tbody tr:hover{background:#182736}
+.empty{text-align:center;color:var(--muted);padding:30px}.rx{color:var(--accent)}.tx{color:#8dbaff}
+.footnote{margin-top:10px;font-size:11px;color:var(--muted)}
+details{margin-top:14px;min-width:0}summary{padding:16px 20px;cursor:pointer;font-weight:600}
+.detailbody{padding:0 20px 20px}
+.formgrid{display:grid;grid-template-columns:120px 125px minmax(180px,1fr) 120px;gap:12px;margin:14px 0}
+.actions{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0}.primary{background:#225047;color:#b5fbe5;border-color:#387a69}.danger{color:var(--red)}
+#actionMessage{min-height:24px;overflow-wrap:anywhere}.stale table{opacity:.55}
+.settings{display:flex;align-items:end;gap:12px;flex-wrap:wrap}.settings label{width:180px}
+@media(max-width:960px){.shell{padding:16px 20px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.grid{grid-template-columns:1fr}.formgrid{grid-template-columns:1fr 1fr}}
+@media(max-width:520px){.shell{padding:12px}.header{gap:8px}.card{padding:14px}.value{font-size:20px}.panel{padding:16px}.toolbar{align-items:flex-start}.toolbar label{font-size:11px}.duty{grid-template-columns:1fr}.formgrid{grid-template-columns:1fr}.detailbody{padding:0 16px 16px}.diag{gap:0 10px}}
+@media(max-width:340px){.cards{grid-template-columns:1fr}.controls{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<main class="shell">
+  <header class="header">
+    <h1 class="sr-only">Motor control</h1>
+    <span id="connectionNotice" class="linknote" role="status">Connecting to device</span>
+    <span id="browserLink" class="chip" role="status">CONNECTING</span>
+  </header>
+  <section class="cards" aria-label="System overview">
+    <article class="card"><div class="label" title="Local CAN controller; not confirmation of motor connectivity">CAN</div><div id="canValue" class="value">Unknown</div><small id="canDetail">Waiting for device</small></article>
+    <article class="card"><div class="label">Motor</div><div class="value muted" id="motorState">Unavailable</div></article>
+    <article class="card"><div class="label">Duty</div><div class="value muted" id="requestedDuty">&mdash; <small style="display:inline">%</small></div></article>
+    <article class="card"><div class="label">Faults</div><div class="value warn" id="motorFault">Unknown</div></article>
+  </section>
+  <div class="grid">
+    <section class="panel" aria-labelledby="controlTitle">
+      <div class="panelhead"><h2 id="controlTitle">Motor Control</h2><span class="chip warn">UNAVAILABLE</span></div>
+      <p class="muted" id="motorHelp">Motor controls unavailable: protocol not integrated.</p>
+      <div id="motorCommands" class="controls" aria-describedby="motorHelp"></div>
+      <div class="duty"><label>Duty<div class="unit"><input type="number" min="0" max="100" placeholder="Unavailable" disabled aria-describedby="motorHelp"><span>%</span></div></label><label>Max duty<div class="unit"><input type="number" min="0" max="100" placeholder="Unavailable" disabled aria-describedby="motorHelp"><span>%</span></div></label></div>
+    </section>
+    <section class="panel" aria-labelledby="diagTitle">
+      <div class="panelhead"><h2 id="diagTitle">Diagnostics</h2><span id="snapshotAge" class="chip">NO SNAPSHOT</span></div>
+      <dl class="diag">
+        <div><dt title="Received frames / transmit queue acceptances, excluding heartbeat">RX / TX queued</dt><dd id="totals">&mdash; / &mdash;</dd></div><div><dt>Cyclic jobs</dt><dd id="activeJobs">&mdash; / 8</dd></div>
+        <div><dt>TX / RX errors</dt><dd id="errors">&mdash; / &mdash;</dd></div><div><dt>Bus errors / missed RX</dt><dd id="busErrors">&mdash; / &mdash;</dd></div>
+        <div><dt>Heartbeat sent / failed</dt><dd id="heartbeat">&mdash; / &mdash;</dd></div><div><dt>Bus recoveries</dt><dd id="recoveries">&mdash;</dd></div>
+        <div><dt>Uptime</dt><dd id="uptime">&mdash;</dd></div><div><dt>Bitrate</dt><dd id="bitrate">&mdash;</dd></div>
+      </dl>
+      
+    </section>
+  </div>
+  <section class="panel" aria-labelledby="monitorTitle" id="monitorPanel">
+    <div class="panelhead"><div><h2 id="monitorTitle">CAN Monitor</h2></div><div class="toolbar"><label><span class="sr-only">Direction</span><select id="direction"><option value="ALL">All</option><option>RX</option><option>TX</option></select></label><label><span class="sr-only">ID filter</span><input id="idFilter" placeholder="Filter ID" maxlength="10"></label><button id="pauseMonitor" type="button" aria-pressed="false">Pause view</button></div></div>
+    <div class="tablewrap"><table><thead><tr><th scope="col">Timestamp (ms)</th><th scope="col">Dir</th><th scope="col">CAN ID</th><th scope="col">Type</th><th scope="col">DLC</th><th scope="col">Payload (hex)</th><th scope="col">Count</th><th scope="col">Cycle (ms)</th></tr></thead><tbody id="monitorBody"><tr><td colspan="8" class="empty">Waiting for CAN data</td></tr></tbody></table></div>
+    <p id="monitorNote" class="footnote" title="Aggregated snapshots, not a lossless trace. Direct door TX and heartbeat are not retained as rows. RX time follows reception; TX time indicates queue acceptance.">Latest frames &middot; uptime in ms &middot; TX: manual/cyclic rows only</p>
+  </section>
+  <details id="debugPanel"><summary>CAN Tools</summary><div class="detailbody">
+    <p class="muted">Add / Save stores a row. Send / Enable cyclic transmits it.</p>
+    <form id="txForm"><div class="formgrid"><label>Frame type<select id="frameType"><option>STD</option><option>EXT</option><option value="STD_RTR">STD RTR</option><option value="EXT_RTR">EXT RTR</option></select></label><label>CAN ID (hex)<input id="frameId" value="336" maxlength="10" required autocomplete="off"></label><label>Payload (hex, 0&ndash;8 bytes)<input id="frameData" placeholder="01 02 03 04" maxlength="64" autocomplete="off"></label><label>Cycle (ms)<input id="frameCycle" type="number" min="10" max="2147483647" value="1000" required></label></div>
+    <div class="actions"><button id="addRow" class="primary" type="submit">Add row</button><button id="saveRow" type="button">Save selected</button><button id="sendRow" type="button">Send selected</button><button id="autoRow" type="button">Enable cyclic</button><button id="deleteRow" class="danger" type="button">Delete selected</button><button id="newDraft" type="button">New draft</button></div></form>
+    <div id="actionMessage" role="status" class="muted">Select a row or add a new one.</div>
+    <div class="tablewrap"><table><thead><tr><th scope="col">Select</th><th scope="col">Type</th><th scope="col">ID</th><th scope="col">DLC</th><th scope="col">Payload</th><th scope="col">Cycle (ms)</th><th scope="col">Auto</th><th scope="col">Count</th></tr></thead><tbody id="debugBody"><tr><td colspan="8" class="empty">No TX rows</td></tr></tbody></table></div>
+    <div class="actions"><button id="clearRx" type="button">Clear RX</button><button id="clearTx" type="button" class="danger">Clear TX / stop cyclic</button></div>
+  </div></details>
+  <details><summary>Settings</summary><div class="detailbody"><div class="settings"><label>Bitrate<select id="bitrateSelect"><option value="125">125 kbit/s</option><option value="250">250 kbit/s</option><option value="500" selected>500 kbit/s</option><option value="1000">1000 kbit/s</option></select></label><button id="applyBitrate" type="button">Apply bitrate</button></div><p class="footnote">Applying briefly interrupts CAN communication.</p><p id="deviceInfo" class="footnote"></p></div></details>
+  
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const STALE_MS = 2500;
+let snapshot = null, lastSuccess = 0, disconnected = false, busy = false, paused = false;
+let selected = -1, frozenRows = null, pollPending = null, configEditing = false;
+
+// Capability boundary. No opcodes, guessed response parsing or motor POST path.
+// A future protocol adapter must keep these disabled until real integration exists.
+const motorCapability = Object.freeze({available:false, reason:'Motor protocol not integrated.'});
+const motorCommands = Object.freeze([
+  ['STOP','STOP'],['START_FORWARD','Start forward'],['START_REVERSE','Start reverse'],
+  ['SET_DUTY','Set duty'],['SET_MAX_DUTY','Set max duty'],['GET_STATUS','Get status'],['CLEAR_FAULT','Clear fault']
+]);
+function renderMotorCommands() {
+  $('motorCommands').innerHTML = motorCommands.map(([cmd,label]) => `<button type="button" class="command ${cmd === 'STOP' ? 'stop' : ''}" data-motor="${cmd}" disabled aria-describedby="motorHelp" title="${motorCapability.reason}">${label}</button>`).join('');
+}
+
+// HTTP transport. POSTs are never retried: an interrupted reply can be ambiguous.
+async function request(path, params) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1800);
+  try {
+    const options = {cache:'no-store', signal:controller.signal};
+    if (params) Object.assign(options, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:new URLSearchParams(params)});
+    const response = await fetch(path, options);
+    const data = await response.json();
+    if (!response.ok || data.ok !== true) throw new Error(data.msg || 'Device rejected request');
+    return data;
+  } finally { clearTimeout(timer); }
+}
+function fresh() { return !!snapshot && !disconnected && Date.now() - lastSuccess <= STALE_MS; }
+function selectedRow() { return snapshot && snapshot.tx.find(row => Number(row.idx) === selected); }
+function message(text, tone = 'muted') { $('actionMessage').textContent = text; $('actionMessage').className = tone; }
+function updateLocks() {
+  const row = selectedRow(), online = fresh(), locked = !!(row && row.auto);
+  ['frameType','frameId','frameCycle'].forEach(id => $(id).disabled = busy || locked);
+  $('frameData').disabled = busy || locked || $('frameType').value.includes('RTR');
+  $('addRow').disabled = !online || busy || locked;
+  $('saveRow').disabled = !online || busy || !row || locked;
+  $('deleteRow').disabled = !online || busy || !row || locked;
+  ['sendRow','autoRow'].forEach(id => $(id).disabled = !online || busy || !row);
+  $('autoRow').textContent = locked ? 'Stop cyclic' : 'Enable cyclic';
+  ['clearRx','clearTx','applyBitrate'].forEach(id => $(id).disabled = !online || busy);
+  $('newDraft').disabled = busy;
+  document.querySelectorAll('[data-select]').forEach(button => button.disabled = busy);
+  // No browser or CAN status enables unsupported motor controls.
+}
+function renderConnection() {
+  const age = snapshot ? Date.now() - lastSuccess : 0;
+  const stale = !!snapshot && age > STALE_MS;
+  const text = disconnected ? 'DISCONNECTED' : stale ? 'STALE' : snapshot ? 'CONNECTED' : 'CONNECTING';
+  $('browserLink').textContent = text;
+  $('browserLink').className = 'chip ' + (fresh() ? 'ok' : 'warn');
+  $('snapshotAge').textContent = snapshot ? (stale || disconnected ? 'OLD / ' : '') + (age / 1000).toFixed(1) + ' s ago' : 'NO SNAPSHOT';
+  $('snapshotAge').className = 'chip ' + (fresh() ? 'ok' : 'warn');
+  $('canValue').textContent = snapshot ? snapshot.can : 'Unknown';
+  $('canValue').className = 'value ' + (!fresh() ? 'muted' : snapshot.can === 'RUNNING' ? 'ok' : 'error');
+  $('canDetail').textContent = !snapshot ? 'Waiting' : !fresh() ? 'Last known / stale' : snapshot.bitrate + ' kbit/s';
+  $('connectionNotice').hidden = fresh();
+  $('connectionNotice').textContent = disconnected ? 'Offline / data may be old' : stale ? 'Stale data' : 'Connecting to device';
+  $('monitorPanel').classList.toggle('stale', !fresh());
+  updateLocks();
+}
+function monitorRows(data) {
+  return [...data.rx.map(row => ({...row, direction:'RX'})), ...data.tx.filter(row => row.count > 0).map(row => ({...row, direction:'TX'}))]
+    .sort((a,b) => ((data.uptime - a.lastMs) >>> 0) - ((data.uptime - b.lastMs) >>> 0));
+}
+function renderMonitor() {
+  const rows = paused ? frozenRows : snapshot ? monitorRows(snapshot) : [];
+  const filter = $('idFilter').value.trim().replace(/^0x/i,'').replace(/h$/i,'').toUpperCase();
+  const direction = $('direction').value;
+  const visible = (rows || []).filter(row => (direction === 'ALL' || row.direction === direction) && String(row.canid).toUpperCase().includes(filter));
+  $('monitorBody').innerHTML = visible.length ? visible.map(row => `<tr><td>${esc(row.lastMs)}</td><td class="${row.direction.toLowerCase()}">${row.direction}</td><td>${esc(row.canid)}</td><td>${esc(row.type)}</td><td>${esc(row.len)}</td><td>${esc(row.data || '\u2014')}</td><td>${esc(row.count)}</td><td>${esc(row.cycle)}</td></tr>`).join('') : '<tr><td colspan="8" class="empty">No frames</td></tr>';
+  $('pauseMonitor').textContent = paused ? 'Resume view' : 'Pause view';
+  $('pauseMonitor').setAttribute('aria-pressed', String(paused));
+  $('monitorNote').textContent = (paused ? 'View paused / CAN remains active. ' : '') + 'Latest frames · uptime in ms · TX: manual/cyclic rows only';
+}
+function renderDebug() {
+  const rows = snapshot ? snapshot.tx : [];
+  $('debugBody').innerHTML = rows.length ? rows.map(row => `<tr><td><button type="button" data-select="${Number(row.idx)}" aria-pressed="${Number(row.idx) === selected}">${Number(row.idx) === selected ? 'Selected' : 'Edit'}</button></td><td>${esc(row.type)}</td><td>${esc(row.canid)}</td><td>${esc(row.len)}</td><td>${esc(row.data || '\u2014')}</td><td>${esc(row.cycle)}</td><td class="${row.auto ? 'warn' : 'muted'}">${row.auto ? 'ACTIVE' : 'Off'}</td><td>${esc(row.count)}</td></tr>`).join('') : '<tr><td colspan="8" class="empty">No TX rows</td></tr>';
+  if (selected >= 0 && !selectedRow()) { selected = -1; message('Row removed. Draft retained.'); }
+  updateLocks();
+}
+function renderSnapshot(data) {
+  $('totals').textContent = data.rxTotal + ' / ' + data.txTotal;
+  $('activeJobs').textContent = data.tx.filter(row => row.auto).length + ' / 8';
+  $('errors').textContent = data.txErr + ' / ' + data.rxErr;
+  $('busErrors').textContent = data.busErr + ' / ' + data.rxMiss;
+  $('heartbeat').textContent = data.hbSent + ' / ' + data.hbFail;
+  $('recoveries').textContent = data.hbRecover;
+  $('uptime').textContent = (data.uptime / 1000).toFixed(1) + ' s';
+  $('bitrate').textContent = data.bitrate + ' kbit/s';
+  $('deviceInfo').textContent = data.ip + ' / FW ' + data.fw;
+  if (!configEditing) $('bitrateSelect').value = String(data.bitrate);
+  renderConnection(); renderMonitor(); renderDebug();
+}
+async function pollOnce() {
+  if (pollPending) return pollPending;
+  pollPending = (async () => {
+    try {
+      const data = await request('/api/dashboard/state');
+      if (!Array.isArray(data.rx) || !Array.isArray(data.tx) || !Number.isFinite(data.uptime)) throw new Error('Invalid snapshot');
+      snapshot = data; lastSuccess = Date.now(); disconnected = false; renderSnapshot(data);
+    } catch (error) { disconnected = true; renderConnection(); }
+  })();
+  try { await pollPending; } finally { pollPending = null; }
+}
+async function pollLoop() { await pollOnce(); setTimeout(pollLoop, document.hidden ? 2000 : 600); }
+
+// Raw CAN tools use the existing validated API. No motor actions enter this path.
+function draftParams() {
+  const type = $('frameType').value;
+  return {id:$('frameId').value.trim(), data:$('frameData').value.trim(), cycle:$('frameCycle').value,
+    ext:type.includes('EXT') ? '1' : '0', rtr:type.includes('RTR') ? '1' : '0'};
+}
+function selectRow(idx) {
+  if (busy) return;
+  const row = snapshot && snapshot.tx.find(item => Number(item.idx) === idx);
+  if (!row) return;
+  selected = idx;
+  $('frameType').value = String(row.type).replace(' ','_');
+  $('frameId').value = String(row.canid).replace(/h$/i,'');
+  $('frameData').value = String(row.type).includes('RTR') ? '' : row.data;
+  $('frameCycle').value = row.cycle;
+  message('Row ' + idx + ' selected. Save edits before sending.');
+  renderDebug();
+}
+async function mutate(path, params, onSuccess) {
+  if (busy || !fresh()) return;
+  busy = true; updateLocks(); message('Request in progress\u2026');
+  try {
+    const data = await request(path, params);
+    if (onSuccess) onSuccess(data);
+    message(data.msg || 'Request accepted', 'ok');
+    // A GET already in flight can predate this mutation. Finish it, then obtain
+    // a post-action snapshot before releasing the busy guard.
+    if (pollPending) await pollPending;
+    await pollOnce();
+  } catch (error) {
+    message('Request not confirmed: ' + error.message + '. Check device state before retrying.', 'error');
+  } finally { busy = false; updateLocks(); }
+}
+$('txForm').addEventListener('submit', event => { event.preventDefault(); if (!$('addRow').disabled) mutate('/api/tx/add', draftParams(), data => { selected = Number(data.idx); }); });
+$('saveRow').addEventListener('click', () => { if (!$('saveRow').disabled) mutate('/api/tx/update', {...draftParams(), idx:selected}); });
+$('sendRow').addEventListener('click', () => { if (!$('sendRow').disabled) mutate('/api/tx/send', {idx:selected}); });
+$('deleteRow').addEventListener('click', () => { if (!$('deleteRow').disabled) mutate('/api/tx/delete', {idx:selected}, () => { selected = -1; }); });
+$('autoRow').addEventListener('click', () => {
+  const row = selectedRow(); if ($('autoRow').disabled || !row) return;
+  mutate('/api/tx/auto', {...draftParams(), idx:selected, enable:row.auto ? '0' : '1'});
+});
+$('newDraft').addEventListener('click', () => { if (busy) return; selected = -1; message('New draft'); renderDebug(); });
+$('frameType').addEventListener('change', updateLocks);
+$('debugBody').addEventListener('click', event => { const button = event.target.closest('[data-select]'); if (button) selectRow(Number(button.dataset.select)); });
+$('clearRx').addEventListener('click', () => mutate('/api/clear_rx', {}));
+$('clearTx').addEventListener('click', () => mutate('/api/clear_tx', {}, () => { selected = -1; }));
+$('bitrateSelect').addEventListener('change', () => { configEditing = true; });
+$('applyBitrate').addEventListener('click', () => mutate('/api/config', {bitrate:$('bitrateSelect').value}, () => { configEditing = false; }));
+$('pauseMonitor').addEventListener('click', () => { paused = !paused; frozenRows = paused && snapshot ? monitorRows(snapshot) : null; renderMonitor(); });
+$('direction').addEventListener('change', renderMonitor);
+$('idFilter').addEventListener('input', renderMonitor);
+document.addEventListener('keydown', event => { if (event.repeat && event.target.tagName === 'BUTTON') event.preventDefault(); });
+renderMotorCommands(); renderConnection(); pollLoop();
+setInterval(renderConnection, 250);
+</script>
+</body>
+</html>
+)MOTOR";
+
+
+// ================== READ-ONLY DASHBOARD API ==================
+void handleMotorPage() {
+  server.send_P(200, "text/html; charset=utf-8", MOTOR_HTML);
+}
+
+void appendDashboardRowJson(String &j, const CanRow &row, bool isTx, int idx) {
+  appendRowJson(j, row, isTx, idx);
+  j.remove(j.length() - 1);  // Extend only the new endpoint; legacy JSON is unchanged.
+  j += ",\"lastMs\":";
+  j += String(row.lastMs);
+  j += "}";
+}
+
+void handleDashboardState() {
+  // Fixed storage, used only by the single WebServer loop. Never serialize with
+  // rxMutex held: RX processing and the independent heartbeat retain their tasks.
+  static CanRow snapshotRx[MAX_RX_ROWS];
+  uint32_t now, snapshotRxTotal;
+  xSemaphoreTake(rxMutex, portMAX_DELAY);
+  memcpy(snapshotRx, rxRows, sizeof(snapshotRx));
+  now = millis();
+  snapshotRxTotal = rxTotal;
+  xSemaphoreGive(rxMutex);
+
+  twai_status_info_t status = {};
+  const bool haveStatus = canReady && twai_get_status_info(&status) == ESP_OK;
+  String j;
+  j.reserve(32000);
+  j += "{\"ok\":true,\"can\":\"";
+  j += haveStatus ? canStateName(status.state) : "NOT_READY";
+  j += "\",\"ip\":\"";
+  j += WiFi.softAPIP().toString();
+  j += "\",\"fw\":\"" __DATE__ " " __TIME__ "\",\"uptime\":";
+  j += String(now);
+  j += ",\"bitrate\":";
+  j += String(currentBitrate);
+  j += ",\"rxTotal\":";
+  j += String(snapshotRxTotal);
+  j += ",\"txTotal\":";
+  j += String(txTotal);
+  j += ",\"txErr\":";
+  j += String(status.tx_error_counter);
+  j += ",\"rxErr\":";
+  j += String(status.rx_error_counter);
+  j += ",\"busErr\":";
+  j += String(status.bus_error_count);
+  j += ",\"rxMiss\":";
+  j += String(status.rx_missed_count);
+  j += ",\"hbSent\":";
+  j += String((uint32_t)hbSent);
+  j += ",\"hbFail\":";
+  j += String((uint32_t)hbFail);
+  j += ",\"hbRecover\":";
+  j += String((uint32_t)hbRecover);
+  j += ",\"tx\":[";
+  bool first = true;
+  for (int i = 0; i < MAX_ROWS; ++i) {
+    if (!txRows[i].used) continue;
+    if (!first) j += ",";
+    appendDashboardRowJson(j, txRows[i], true, i);
+    first = false;
+  }
+  j += "],\"rx\":[";
+  first = true;
+  for (int i = 0; i < MAX_RX_ROWS; ++i) {
+    if (!snapshotRx[i].used) continue;
+    if (!first) j += ",";
+    appendDashboardRowJson(j, snapshotRx[i], false, i);
+    first = false;
+  }
+  j += "]}";
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json; charset=utf-8", j);
+}
+
+
 // ================== API ==================
 void handleRoot() {
   server.send_P(200, "text/html; charset=utf-8", INDEX_HTML);
@@ -2392,6 +2751,9 @@ void setup() {
   server.on("/door", HTTP_GET, handleDoorPage);
   server.on("/api/door/state", HTTP_GET, handleDoorState);
   server.on("/api/door/cmd", HTTP_POST, handleDoorCmd);
+
+  server.on("/motor", HTTP_GET, handleMotorPage);
+  server.on("/api/dashboard/state", HTTP_GET, handleDashboardState);
 
   server.begin();
 
